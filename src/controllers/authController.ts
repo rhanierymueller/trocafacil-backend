@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { createUser, findUserByEmail, findUserById, updateUserById } from '../models/userModel'; // Adicione findUserByEmail
+import axios from 'axios';
+
 
 const JWT_SECRET = process.env.JWT_SECRET || 'default_secret';
 
@@ -9,13 +11,35 @@ export const register = async (req: Request, res: Response): Promise<Response> =
   try {
     const { name, email, password, cep, street, number, neighborhood, city, state } = req.body;
 
-      const existingUser = await findUserByEmail(email);
-      if (existingUser) {
-        return res.status(400).json({ message: 'Email já registrado' });
+    const existingUser = await findUserByEmail(email);
+    if (existingUser) {
+      return res.status(400).json({ message: 'Email já registrado' });
+    }
+
+    let lat: number | null = null;
+    let lon: number | null = null;
+
+    // Realiza geocodificação
+    const fullAddress = `${street}, ${number}, ${neighborhood}, ${city}, ${state}, ${cep}`;
+    try {
+      const geoResponse = await axios.get('https://nominatim.openstreetmap.org/search', {
+        params: { q: fullAddress, format: 'json', limit: 1 },
+      });
+
+      if (geoResponse.data.length > 0) {
+        lat = parseFloat(geoResponse.data[0].lat);
+        lon = parseFloat(geoResponse.data[0].lon);
+      } else {
+        return res.status(400).json({ message: 'Endereço não encontrado. Verifique os dados informados.' });
       }
+    } catch (error) {
+      console.error('Erro ao acessar serviço de geocodificação:', error);
+      return res.status(500).json({ message: 'Erro ao acessar o serviço de geocodificação.' });
+    }
 
     // Criptografa a senha
     const hashedPassword = await bcrypt.hash(password, 10);
+    console.log('Coordenadas para salvar:', { latitude: lat, longitude: lon });
 
     const newUser = await createUser({
       name,
@@ -27,6 +51,8 @@ export const register = async (req: Request, res: Response): Promise<Response> =
       neighborhood,
       city,
       state,
+      latitude: lat || null, // Certifique-se de que valores inválidos não sejam passados
+      longitude: lon || null,
     });
 
     return res.status(201).json(newUser);
@@ -36,11 +62,11 @@ export const register = async (req: Request, res: Response): Promise<Response> =
   }
 };
 
+
 export const login = async (req: Request, res: Response): Promise<Response> => {
   try {
     const { email, password } = req.body;
 
-    // Verifica se o usuário existe
     const user = await findUserByEmail(email);
     if (!user) {
       return res.status(404).json({ message: 'Usuário não encontrado' });
